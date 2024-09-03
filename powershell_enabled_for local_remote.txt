@@ -1,0 +1,61 @@
+1. Configure WinRM on the Remote Machine
+Ensure that the WinRM service is running on the remote machine:
+
+Open PowerShell as Administrator on the remote machine.
+Run the following command to enable WinRM:
+
+powershell
+Copy code
+Enable-PSRemoting -Force
+To allow connections from non-domain computers (like workgroups), configure TrustedHosts:
+
+powershell
+Copy code
+Set-Item WSMan:\localhost\Client\TrustedHosts -Value "WIN-V1S1KJM6MLU" -Concatenate
+If you need to allow connections from multiple computers, separate them with commas.
+
+Make sure the WinRM service is set to start automatically and is currently running:
+
+powershell
+Copy code
+Set-Service -Name WinRM -StartupType Automatic
+Start-Service -Name WinRM
+
+PS C:\Users\Administrator>
+>>                 $securePassword = ConvertTo-SecureString 'Sasasa1' -AsPlainText -Force;
+>>                 $cred = New-Object System.Management.Automation.PSCredential('Administrator', $securePassword);
+>>                 Invoke-Command -ComputerName WIN-V1S1KJM6MLU -Credential $cred -ScriptBlock {
+>>                     Enable-PSRemoting -Force;
+>>                     Set-Item WSMan:\localhost\Client\TrustedHosts -Value 'JIMPENGTHAI92' -Concatenate;
+>>                     Set-Service -Name WinRM -StartupType Automatic;
+>>                     Start-Service -Name WinRM;
+>>                 }
+
+WinRM Security Configuration.
+This command modifies the TrustedHosts list for the WinRM client. The computers in the TrustedHosts list might not be
+authenticated. The client might send credential information to these computers. Are you sure that you want to modify
+this list?
+[Y] Yes  [N] No  [?] Help (default is "Y"):
+
+2. Configure WinRM on the Local Machine
+On the local machine, configure WinRM to connect to the remote server:
+
+Open PowerShell as Administrator on the local machine.
+Run the following command to configure TrustedHosts:
+powershell
+Copy code
+Set-Item WSMan:\localhost\Client\TrustedHosts -Value "WIN-V1S1KJM6MLU" -Concatenate
+Restart the WinRM service to apply the changes:
+powershell
+Copy code
+Restart-Service WinRM
+
+PS C:\WINDOWS\system32>
+>>                 Set-Item WSMan:\localhost\Client\TrustedHosts -Value 'WIN-V1S1KJM6MLU' -Concatenate;
+>>                 Restart-Service WinRM Y
+
+WinRM Security Configuration.
+This command modifies the TrustedHosts list for the WinRM client. The computers in the TrustedHosts list might not be
+authenticated. The client might send credential information to these computers. Are you sure that you want to modify
+this list?
+[Y] Yes  [N] No  [S] Suspend  [?] Help (default is "Y"):
