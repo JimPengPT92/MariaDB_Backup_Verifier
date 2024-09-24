@@ -1,4 +1,5 @@
 ﻿using System;
+using System.ComponentModel;
 using System.Configuration;
 using System.Diagnostics;
 using System.IO;
@@ -68,7 +69,8 @@ namespace MariaDB_Backup_and_Verifications
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
-                CreateNoWindow = true
+                CreateNoWindow = true,
+                Verb = "runas" // This line runs the process as administrator
             };
 
             using (Process proc = new Process())
@@ -83,7 +85,7 @@ namespace MariaDB_Backup_and_Verifications
 
                     if (!string.IsNullOrEmpty(error))
                     {
-                        if (error.Contains("completed"))
+                        if (error.Contains("completed") || error.Contains("success"))
                         {
                             if (type == "Local")
                             {
@@ -223,132 +225,112 @@ namespace MariaDB_Backup_and_Verifications
 
         static void RestoreBackups(ref string backupPath, ref string strmessage)
         {
-            // Ensure MariaDB service is stopped before restoring
+            // Step 1: Stop MariaDB service using admin credentials
             if (!StopMariaDBService(ref strmessage))
             {
                 strmessage = "Error stopping MariaDB service: " + strmessage;
                 return;
             }
 
-            // Clear the data directory before restoring
+            // Step 2: Clear data directory
             ClearDataDirectory(ref strmessage);
-
-            if (!strmessage.Contains("Failed"))
+            if (strmessage.Contains("Error"))
             {
-                string dumpExe = glbMariaDBExePath;
-                string dataDir = glbMariaDBDataDir;
-                string restoreCommand = $@"& '{dumpExe}' --copy-back --target-dir='{backupPath}' --datadir='{dataDir}'";
-
-                ExecuteCommand(restoreCommand, ref strmessage, backupPath, "Restore");
-
-                // Start MariaDB service after restoring
-                if (!StartMariaDBService(ref strmessage))
-                {
-                    strmessage = "Error starting MariaDB service: " + strmessage;
-                }
-                else
-                {
-                    strmessage += "\nBackup restored successfully.";
-                }
+                return; // Stop if there's an error clearing the directory
             }
-            else
+
+            // Step 3: Restore the backup
+            string restoreCommand = $@"Copy-Item -Path '{backupPath}\*' -Destination '{glbMariaDBDataDir}' -Recurse -Force";
+            ExecuteCommand(restoreCommand, ref strmessage, backupPath, "Restore");
+
+            // Step 4: Start MariaDB service after restoration
+            if (!StartMariaDBService(ref strmessage))
             {
-                strmessage = "Error clearing data directory: " + strmessage;
+                strmessage = "Error starting MariaDB service after restoration: " + strmessage;
+                return;
             }
+
+            strmessage += "Backup restoration completed successfully.";
+        }
+
+        static void ClearDataDirectory(ref string strmessage)
+        {
+            string clearDirCommand = $@"Remove-Item -Recurse -Force '{glbMariaDBDataDir}'; New-Item -Path '{glbMariaDBDataDir}' -ItemType Directory;";
+            ExecuteCommand(clearDirCommand, ref strmessage, "", "ClearData");
         }
 
         static bool StartMariaDBService(ref string strmessage)
         {
-            try
+            using (ServiceController service = new ServiceController("MariaDB"))
             {
-                using (ServiceController service = new ServiceController("MariaDB"))
+                // Check if the service is running
+                if (service.Status == ServiceControllerStatus.Running)
                 {
-                    if (service.Status != ServiceControllerStatus.Running && service.Status != ServiceControllerStatus.StartPending)
-                    {
-                        service.Start();
-                        service.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(30));
-                    }
+                    strmessage = "MariaDB service is already running.";
+                    return true; // No need to start it again
+                }
 
-                    if (service.Status == ServiceControllerStatus.Running)
+                try
+                {
+                    // Grant permissions before starting the service
+                    string grantPermissionsCommand = $@"
+                $acl = Get-Acl '{glbMariaDBDataDir}';
+                $userName = '{glbLocalUser}';
+                $securePassword = ConvertTo-SecureString '{glbLocalPassword}' -AsPlainText -Force;
+                $shareCred = New-Object System.Management.Automation.PSCredential($userName, $securePassword);
+                
+                if (-not (Get-WmiObject -Class Win32_UserAccount | Where-Object {{ $_.Name -eq $userName }})) {{
+                    throw 'User ''' + $userName + ''' does not exist. Cannot set permissions.';
+                }}
+
+                $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($userName, 'FullControl', 'Allow');
+                $acl.SetAccessRule($rule);
+                Set-Acl '{glbMariaDBDataDir}' $acl;
+            ";
+
+                    // Execute permission granting command
+                    ExecuteCommand(grantPermissionsCommand, ref strmessage, "", "StartService");
+                    if (strmessage.Contains("Error"))
                     {
-                        return true;
-                    }
-                    else
-                    {
-                        strmessage = "Failed to start MariaDB service.";
+                        strmessage = "Failed to grant necessary permissions.";
                         return false;
                     }
+
+                    // Start the MariaDB service
+                    string startCommand = "Start-Service -Name 'MariaDB'";
+                    ExecuteCommand(startCommand, ref strmessage, "", "StartService");
+                    if (strmessage.Contains("Error"))
+                    {
+                        strmessage = "Failed to start the MariaDB service.";
+                        return false;
+                    }
+
+                    strmessage = "MariaDB service started successfully.";
+                    return true;
                 }
-            }
-            catch (Exception ex)
-            {
-                strmessage = "Error starting MariaDB service: " + ex.Message;
-                return false;
+                catch (InvalidOperationException ex)
+                {
+                    strmessage = $"Error starting MariaDB service: {ex.Message}";
+                    return false;
+                }
+                catch (System.ServiceProcess.TimeoutException)
+                {
+                    strmessage = "Error: Timeout occurred while starting MariaDB service.";
+                    return false;
+                }
+                catch (Exception ex)
+                {
+                    strmessage = $"Unexpected error: {ex.Message}";
+                    return false;
+                }
             }
         }
 
         static bool StopMariaDBService(ref string strmessage)
         {
-            try
-            {
-                using (ServiceController service = new ServiceController("MariaDB"))
-                {
-                    if (service.Status != ServiceControllerStatus.Stopped && service.Status != ServiceControllerStatus.StopPending)
-                    {
-                        service.Stop();
-                        service.WaitForStatus(ServiceControllerStatus.Stopped, TimeSpan.FromSeconds(30));
-                    }
-
-                    if (service.Status == ServiceControllerStatus.Stopped)
-                    {
-                        return true;
-                    }
-                    else
-                    {
-                        strmessage = "Failed to stop MariaDB service.";
-                        return false;
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                strmessage = "Error stopping MariaDB service: " + ex.Message;
-                return false;
-            }
-        }
-
-        static void ClearDataDirectory(ref string strmessage)
-        {
-            string dataDir = glbMariaDBDataDir;
-            bool success = false;
-            int retryCount = 3;
-
-            for (int i = 0; i < retryCount; i++)
-            {
-                try
-                {
-                    // Ensure MariaDB service is stopped
-                    if (StopMariaDBService(ref strmessage))
-                    {
-                        ExecuteCommand($"Remove-Item -Recurse -Force -LiteralPath '{dataDir}'", ref strmessage, dataDir, "ClearDataDir");
-                        if (!strmessage.Contains("Error"))
-                        {
-                            success = true;
-                            break;
-                        }
-                    }
-                }
-                catch
-                {
-                    // Wait for a moment before retrying
-                    System.Threading.Thread.Sleep(5000);
-                }
-            }
-
-            if (!success)
-            {
-                strmessage = "Failed to clear data directory after multiple attempts.";
-            }
+            string stopCommand = "Stop-Service -Name 'MariaDB'";
+            ExecuteCommand(stopCommand, ref strmessage, "", "StopService");
+            return !strmessage.Contains("Error");
         }
 
         private void btnLocalBackup_Click(object sender, EventArgs e)
@@ -402,30 +384,33 @@ namespace MariaDB_Backup_and_Verifications
 
         private void btnRestoreBackups_Click(object sender, EventArgs e)
         {
-            string backupPath = glbLocalBackupPath;
-            RestoreBackups(ref backupPath, ref strmessage);
+            string strmessage = "";
 
-            if (string.IsNullOrEmpty(strmessage) || strmessage.Contains("completed successfully"))
+            // Attempt local backup restoration
+            string localBackupPath = glbLocalBackupPath;
+            RestoreBackups(ref localBackupPath, ref strmessage);
+
+            if (!strmessage.Contains("successfully"))
             {
-                strmessage += "\nLocal backup restored successfully.";
-                backupPath = glbRemoteBackupPath;
-                RestoreBackups(ref backupPath, ref strmessage);
-
-                if (string.IsNullOrEmpty(strmessage) || strmessage.Contains("completed successfully"))
-                {
-                    strmessage += "\nRemote backup restored successfully.";
-                }
-                else
-                {
-                    strmessage = "Error restoring remote backup: " + strmessage;
-                }
+                MessageBox.Show("Local Backup Restoration failed: " + strmessage, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
             else
             {
-                strmessage = "Error restoring local backup: " + strmessage;
+                MessageBox.Show("Local Backup Restoration completed successfully.", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
 
-            MessageBox.Show(strmessage);
+            // Attempt remote backup restoration
+            string remoteBackupPath = glbRemoteBackupPath; // Ensure the remote backup path is used
+            RestoreBackups(ref remoteBackupPath, ref strmessage);
+
+            if (!strmessage.Contains("successfully"))
+            {
+                MessageBox.Show("Remote Backup Restoration failed: " + strmessage, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            else
+            {
+                MessageBox.Show("Remote Backup Restoration completed successfully.", "Success", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
         }
     }
 }

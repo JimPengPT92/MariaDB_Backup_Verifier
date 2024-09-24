@@ -66,7 +66,6 @@
             // 
             // btnRestoreBackups
             // 
-            this.btnRestoreBackups.Enabled = false;
             this.btnRestoreBackups.Location = new System.Drawing.Point(227, 120);
             this.btnRestoreBackups.Name = "btnRestoreBackups";
             this.btnRestoreBackups.Size = new System.Drawing.Size(130, 58);
