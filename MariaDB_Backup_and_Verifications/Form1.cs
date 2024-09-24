@@ -9,7 +9,7 @@ using System.Windows.Forms;
 
 namespace MariaDB_Backup_and_Verifications
 {/// <summary>
-/// //////jknlkn
+/// /
 /// </summary>
     public partial class Form1 : Form
     {
