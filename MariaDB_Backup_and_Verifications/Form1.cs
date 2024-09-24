@@ -197,6 +197,7 @@ namespace MariaDB_Backup_and_Verifications
                 strmessage = $"Error: No backup directories found in {backupPath}. Verification cannot proceed.";
                 return;
             }
+            //
 
             string latestBackupDir = backupDirs.OrderByDescending(dir => Directory.GetCreationTime(dir)).First();
             string cnfFile = Path.Combine(latestBackupDir, "backup-my.cnf");
