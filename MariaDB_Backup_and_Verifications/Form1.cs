@@ -8,9 +8,7 @@ using System.ServiceProcess;
 using System.Windows.Forms;
 
 namespace MariaDB_Backup_and_Verifications
-{/// <summary>
-/// /////////////////////////////////testtesttest
-/// </summary>
+{//edmonton oilers
     public partial class Form1 : Form
     {
         private static readonly string glbMariaDBExePath = ConfigurationManager.AppSettings["MariaDBExePath"];
